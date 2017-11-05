@@ -1,0 +1,247 @@
+<!-- マウスの軌跡を取得、再生するスクリプト（軌跡情報圧縮版） -->
+
+<style>
+  #marker {
+    position:absolute;
+  }
+  #marker2 {
+    position:absolute;
+    color:red;
+  }
+</style>
+<div>
+  <div id="config-area" style="text-align: center">
+    <span>window length :</span>
+    <select id="window-length">
+      <option value="32">32</option>
+      <option value="64">64</option>
+      <option value="128">128</option>
+      <option value="256">256</option>
+    </select>
+
+    <span class="margin-left-1">sampling rate :</span>
+    <input type="number" id="sampling-rate" value="30"> Hz
+
+    <span class="margin-left-1">compress level :</span>
+    <select id="compress-level">
+      <option value="5">5</option>
+      <option value="4">4</option>
+      <option value="3">3</option>
+      <option value="2">2</option>
+      <option value="1">1</option>
+    </select>
+  </div>
+  <div style="text-align: center">
+    <span class="margin-right-1">Press "Record" button to record mouse track.</span>
+    <input type="button" value="Record" id="record-button" class="margin-top-1 margin-right-1">
+    <input type="button" value="Stop" id="stop-button" class="margin-top-1 display-none">
+    <input type="button" value="Play" id="play-button" class="margin-top-1 display-none">
+  </div>
+  <div>
+    position: (<span id="x-pos">0</span>, <span id="y-pos">0</span>)
+    <span class="margin-left-1">compress rate:</span> <span id="compress-rate">-</span> %
+  </div>
+</div>
+
+<div id="marker" class="display-none">●</div>
+<div id="marker2" class="display-none">●</div>
+
+<script>
+piece_arr = [];
+compress_piece_arr = [];
+window_length = 32;
+compress_level = 5;
+compress_length = Math.ceil(window_length / (2*compress_level) );
+sample_rate = 30;
+sample = Math.ceil(1000/sample_rate);
+// 圧縮
+function compress_track(arr){
+  var shift = window_length/2;
+  var arr_length = arr.length;
+  var tmp_arr = [];
+  var push_arr = [];
+
+  for(var k=0; k<2; k++){
+    push_arr[k] = [];
+    var unitrack = arr.map(function(e){return e[k];});
+    for(var i=0; i<Math.max(Math.ceil((arr_length-window_length)/shift)+1, 1); i++){
+      tmp_arr = unitrack.slice(shift*i, window_length + shift*i);
+      piece_arr[i] = tmp_arr.length;
+      tmp_arr = compress_piece(cosine_piece(tmp_arr))
+      compress_piece_arr[i] = tmp_arr.length;
+      push_arr[k].push(tmp_arr);
+    }
+    push_arr[k] = Array.prototype.concat.apply([], push_arr[k]);
+  }
+  push_arr = transpose(push_arr);
+  return push_arr;
+}
+// 復元
+function retrieve_track(arr){
+  var shift = window_length/2;
+  var shift_sum = 0;
+  var tmp_arr = [];
+  var push_arr = [];
+  var serve_arr = [];
+
+  for(var k=0; k<2; k++){
+    push_arr[k] = [];
+    var unitrack = arr.map(function(e){return e[k];});
+    shift_sum = 0;
+    for(var i=0; i<piece_arr.length; i++){
+      tmp_arr = unitrack.slice(shift_sum, compress_piece_arr[i] + shift_sum);
+      shift_sum += compress_piece_arr[i];
+      transposed = inv_cosine_piece(retrieve_piece(tmp_arr, i));
+      push_arr[k].push( brend(serve_arr, transposed.slice(0, shift)) );
+      serve_arr = transposed.slice(shift, transposed.length);
+    }
+    push_arr[k].push(serve_arr);
+    push_arr[k] = Array.prototype.concat.apply([], push_arr[k]);
+  }
+  push_arr = transpose(push_arr);
+  return push_arr;
+}
+function transpose(a){
+  return Object.keys(a[0]).map(function(c){
+    return a.map(function(r){
+      return r[c];
+    });
+  });
+}
+function compress_piece(arr){
+  var tmp = arr.map(function(e){
+    return Math.ceil(e);
+  });
+  return tmp.slice(0, compress_length);
+}
+function retrieve_piece(arr, piece_index){
+  for(var i=arr.length; i<piece_arr[piece_index]; i++){
+    arr[i] = 0;
+  }
+  return arr;
+}
+function brend(arr1, arr2){
+  if(arr1.length == arr2.length){
+    return arr2.map(function(v, index){
+      return (arr1[index] + v)/2;
+    });
+  }else{
+    return arr2;
+  }
+}
+
+// コサイン変換
+function cosine_piece(arr){
+  var re = 0;
+  var res_arr = [];
+  var len = arr.length;
+  for(var k=0; k<len; k++){
+    for(var i=0; i<len; i++){
+      re += Math.cos(Math.PI/len*(i + 1/2)*k)*arr[i];
+    }
+    res_arr.push(re);
+    re = 0;
+  }
+  return res_arr;
+}
+// コサイン逆変換
+function inv_cosine_piece(arr){
+  var re = 0;
+  var res_arr = [];
+  var len = arr.length;
+  for(var k=0; k<len; k++){
+    for(var i=1; i<len; i++){
+      re += Math.cos(Math.PI/len*(k + 1/2)*i)*arr[i];
+    }
+    res_arr.push(2*re/len + 1/len*arr[0]);
+    re = 0;
+  }
+  return res_arr;
+}
+
+g_pos_arr = [];
+tmp_x_pos = '';
+tmp_y_pos = '';
+
+function play(arr, arr2 = ''){
+  console.log('start');
+  var play_arr = arr;
+  var play_arr2 = arr2;
+  var frame = 0;
+  var len = play_arr.length;
+  $('#marker').removeClass('display-none');
+  $('#marker2').removeClass('display-none');
+  playtimer = setInterval(function(){
+    $('#marker').animate({'top': play_arr[frame][1] + 'px', 'left': play_arr[frame][0] + 'px'}, sample);
+    $('#marker2').animate({'top': play_arr2[frame][1] + 'px', 'left': play_arr2[frame][0] + 'px'}, sample);
+    frame++;
+    if(frame >= len){
+      console.log('end');
+      clearInterval(playtimer);
+      $('#marker').addClass('display-none');
+      $('#marker2').addClass('display-none');
+      $('#play-button').removeClass('display-none');
+
+      $('#record-button').removeClass('display-none');
+    }
+  }, sample);
+}
+
+/*timer = setInterval(push_pos_arr, sample);
+$(window).bind('focus', function(){
+  timer = setInterval(push_pos_arr, sample);
+}).bind('blur', function(){
+  clearInterval(timer);
+});*/
+$('#record-button').on('click', function(){
+  init();
+  timer = setInterval(push_pos_arr, sample);
+  $('#stop-button').removeClass('display-none');
+  $('#play-button').addClass('display-none');
+  $('#compress-rate').text('-');
+});
+$('#stop-button').on('click', function(){
+  clearInterval(timer);
+  $(this).addClass('display-none');
+  $('#play-button').removeClass('display-none');
+});
+$('#play-button').on('click', function(){
+  $('#record-button').addClass('display-none');
+  $('#play-button').addClass('display-none');
+  var compressed = compress_track(g_pos_arr);
+  play(g_pos_arr, retrieve_track(compressed));
+  $('#compress-rate').text(Math.ceil(g_pos_arr.length/compressed.length*100));
+});
+$('#window-length').on('change', function(){
+  window_length = $(this).val();
+  compress_level = $('#compress-level').val();
+  compress_length = Math.ceil(window_length / (2*compress_level) );
+});
+$('#sample-rate').on('keyup', function(){
+  sample_rate = $(this).val();
+  sample = Math.ceil(1000/sample_rate);
+});
+$('#compress-level').on('change', function(){
+  compress_level = $(this).val();
+  compress_length = Math.ceil(window_length / (2*compress_level) );
+});
+document.onmousemove = function(e){
+  tmp_x_pos = e.pageX;
+  tmp_y_pos = e.pageY;
+}
+function push_pos_arr(){
+  if(tmp_x_pos != '' && tmp_y_pos != ''){
+    g_pos_arr.push([tmp_x_pos, tmp_y_pos]);
+    $('#x-pos').text(tmp_x_pos);
+    $('#y-pos').text(tmp_y_pos);
+  }
+}
+function init(){
+  tmp_x_pos = 0;
+  tmp_y_pos = 0;
+  g_pos_arr = [];
+}
+
+
+
+</script>
